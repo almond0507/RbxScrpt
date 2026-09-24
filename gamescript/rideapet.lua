@@ -18,8 +18,13 @@ end)
 
 local ActiveEggs = (ReplicatedStorage:FindFirstChild("ServerData") or ReplicatedStorage):WaitForChild("ActiveEggs")
 local RenderedEggs = Workspace:WaitForChild("RenderedEggs")
-local EggPickup = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Game"):WaitForChild("EggPickup")
+local Remotes = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Game")
+local EggPickup = Remotes:WaitForChild("EggPickup")
+local EggPlacedR = Remotes:WaitForChild("EggPlaced")
+local HatchR = Remotes:WaitForChild("Hatch")
 local EggsData = require(ReplicatedStorage:WaitForChild("GameData"):WaitForChild("Eggs"))
+local General2 = require(ReplicatedStorage:WaitForChild("GameData"):WaitForChild("General"))
+local DayNight = require(ReplicatedStorage:WaitForChild("GameServices"):WaitForChild("DayNight"))
 
 -- Config
 getgenv().AIO = getgenv().AIO or {}
@@ -27,8 +32,8 @@ local CFG = getgenv().AIO
 CFG.MIN_KG = CFG.MIN_KG or 2
 CFG.GO = CFG.GO or CFG.FLY or 170
 CFG.BACK = CFG.BACK or 340
-local ESP_ON, AUTO_ON = false, false
-CFG.ESP, CFG.AUTO = false, false
+local ESP_ON, AUTO_ON, PLACE_ON, HATCH_ON = false, false, false, false
+CFG.ESP, CFG.AUTO, CFG.PLACE, CFG.HATCH = false, false, false, false
 
 local Anchors = {
     {Real = 0.9, Shown = 1},
@@ -132,6 +137,80 @@ local function UnequipAll()
 end
 local function SetStatus(s) if status then pcall(function() status.Text = s end) end end
 
+-- auto place egg
+local hatchCD = {}
+local placeCD = 0
+local function GetMyPlot()
+    local plots = Workspace:FindFirstChild("Plots")
+    if plots then
+        for _, p in ipairs(plots:GetChildren()) do
+            local ok, mine = pcall(function()
+                local data = p:FindFirstChild("Data")
+                local owner = data and data:FindFirstChild("Owner")
+                if owner and owner.Value == LP then return true end
+                if p:GetAttribute("OwnerUserId") == LP.UserId then return true end
+                if p.Name == LP.Name then return true end
+                return false
+            end)
+            if ok and mine then return p end
+        end
+    end
+    local ok, plot = pcall(function()
+        local General = require(ReplicatedStorage:WaitForChild("GameServices"):WaitForChild("General"))
+        return General:GetPlot(LP)
+    end)
+    if ok and plot then return plot end
+    return nil
+end
+local function FindFreeNest(plot)
+    if not plot then return nil end
+    if LP:GetAttribute("NoNest") == true then return "NONEST" end
+    local nests = plot:FindFirstChild("Nests")
+    if not nests then return "NONEST" end
+    for _, n in ipairs(nests:GetChildren()) do
+        if n:GetAttribute("Unlocked") == true and not n:GetAttribute("Occupied") then
+            return n
+        end
+    end
+    return nil
+end
+local function ToolWeight(tool)
+    local w = tonumber(tool:GetAttribute("Weight"))
+        or tonumber(tool:GetAttribute("EggWeight"))
+        or tonumber(tool:GetAttribute("RealWeight"))
+        or 1
+    return w
+end
+local function BiggestEggTool()
+    local best, bestS
+    local char = LP.Character
+    local bp = LP:FindFirstChildOfClass("Backpack")
+    local function scan(container)
+        if not container then return end
+        for _, t in ipairs(container:GetChildren()) do
+            if t:IsA("Tool") and t:HasTag("Egg") then
+                local s = ShownKG(ToolWeight(t))
+                if not bestS or s > bestS then best, bestS = t, s end
+            end
+        end
+    end
+    scan(bp) scan(char)
+    return best, bestS
+end
+local function EggReady(model)
+    local cfg = EggsData[model.Name]
+    local ed = model:FindFirstChild("EggData")
+    local pt = ed and ed:FindFirstChild("PlaceTime")
+    local wt = ed and ed:FindFirstChild("Weight")
+    if not cfg or not pt or pt.Value <= 0 then return false end
+    local w = wt and tonumber(wt.Value) or 1
+    local total = General2.GrowthTimeFor(cfg.GrowthTime, w)
+    local el = model:GetAttribute("FlatGrow") == true
+        and Workspace:GetServerTimeNow() - pt.Value
+        or DayNight.GrowthElapsed(pt.Value)
+    return el >= total
+end
+
 -- GUI
 pcall(function()
     for _, v in ipairs(LP:WaitForChild("PlayerGui"):GetChildren()) do
@@ -148,7 +227,7 @@ gui.Parent = LP:WaitForChild("PlayerGui")
 _G.AIO_Gui = gui
 
 local frame = Instance.new("Frame")
-frame.Size = UDim2.fromOffset(210, 310)
+frame.Size = UDim2.fromOffset(210, 390)
 frame.Position = UDim2.new(0, 12, 0.35, 0)
 frame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
 frame.BorderSizePixel = 0
@@ -265,33 +344,37 @@ status = Label("status: idle", 30, 16)
 status.TextColor3 = Color3.fromRGB(170,255,170)
 status.TextSize = 12
 
-local espB, autoB
+local espB, autoB, placeB, hatchB
 local function Refresh()
     espB.Text = "ESP: " .. (ESP_ON and "ON" or "OFF")
     espB.BackgroundColor3 = ESP_ON and Color3.fromRGB(40, 120, 60) or Color3.fromRGB(45, 45, 55)
     autoB.Text = "Auto: " .. (AUTO_ON and "ON" or "OFF")
     autoB.BackgroundColor3 = AUTO_ON and Color3.fromRGB(40, 120, 60) or Color3.fromRGB(45, 45, 55)
-    CFG.ESP, CFG.AUTO = ESP_ON, AUTO_ON
+    placeB.Text = "Place egg: " .. (PLACE_ON and "ON" or "OFF")
+    placeB.BackgroundColor3 = PLACE_ON and Color3.fromRGB(40, 120, 60) or Color3.fromRGB(45, 45, 55)
+    hatchB.Text = "Hatch egg: " .. (HATCH_ON and "ON" or "OFF")
+    hatchB.BackgroundColor3 = HATCH_ON and Color3.fromRGB(40, 120, 60) or Color3.fromRGB(45, 45, 55)
+    CFG.ESP, CFG.AUTO, CFG.PLACE, CFG.HATCH = ESP_ON, AUTO_ON, PLACE_ON, HATCH_ON
 end
 espB = Button("", 52, function() ESP_ON = not ESP_ON if not ESP_ON then for id, d in pairs(drawings) do pcall(function() d.Name:Remove() end) pcall(function() d.KG:Remove() end) pcall(function() d.Dist:Remove() end) end table.clear(drawings) end Refresh() end)
 autoB = Button("", 86, function() AUTO_ON = not AUTO_ON if not AUTO_ON then moveTarget = nil mode = "HUNT" end Refresh() end)
-Label("KG (min to pickup):", 122, 16)
-Box(CFG.MIN_KG, 138, function(v) if v then CFG.MIN_KG = v end end)
-Label("Go speed (to egg):", 168, 16)
-Box(CFG.GO, 184, function(v) if v and v > 10 then CFG.GO = v end end)
-Label("Back speed (to plot):", 214, 16)
-Box(CFG.BACK, 230, function(v) if v and v > 10 then CFG.BACK = v end end)
-Label("tip: back = 2x go", 260, 14).TextColor3 = Color3.fromRGB(150,150,160)
+placeB = Button("", 120, function() PLACE_ON = not PLACE_ON Refresh() end)
+hatchB = Button("", 154, function() HATCH_ON = not HATCH_ON Refresh() end)
+Label("KG (min to pickup):", 190, 16)
+Box(CFG.MIN_KG, 206, function(v) if v then CFG.MIN_KG = v end end)
+Label("Go speed (to egg):", 236, 16)
+Box(CFG.GO, 252, function(v) if v and v > 10 then CFG.GO = v end end)
+Label("Back speed (to plot):", 282, 16)
+Box(CFG.BACK, 298, function(v) if v and v > 10 then CFG.BACK = v end end)
+Label("tip: place=biggest first", 328, 14).TextColor3 = Color3.fromRGB(150,150,160)
 Refresh()
 
--- tween
+-- fly mover (noclip applied in auto loop, not every frame)
 RunService.Heartbeat:Connect(function(dt)
     if not running then return end
     if not moveTarget then return end
     local hrp = GetHRP()
-    local char = LP.Character
-    if not (hrp and char) then return end
-    pcall(function() for _, p in ipairs(char:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide = false end end end)
+    if not hrp then return end
     local cur = hrp.Position
     local to = moveTarget - cur
     local dist = to.Magnitude
@@ -301,14 +384,29 @@ RunService.Heartbeat:Connect(function(dt)
     hrp.CFrame = CFrame.new(cur + to.Unit * step)
 end)
 
--- esp
+-- cheap noclip, 1x/sec while moving
+task.spawn(function()
+    while running do
+        task.wait(1)
+        if moveTarget then
+            local char = LP.Character
+            if char then
+                pcall(function() for _, p in ipairs(char:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide = false end end end)
+            end
+        end
+    end
+end)
+
+-- esp 
 local ETH = Color3.fromRGB(170, 170, 255)
-RunService.RenderStepped:Connect(function()
-    if not running or not ESP_ON then return end
-    local seen = {}
-    local hrp = GetHRP()
-    local hp = hrp and hrp.Position
-    for _, inst in ipairs(ActiveEggs:GetChildren()) do
+task.spawn(function()
+    while running do
+        task.wait(0.15)
+        if not ESP_ON then continue end
+        local seen = {}
+        local hrp = GetHRP()
+        local hp = hrp and hrp.Position
+        for _, inst in ipairs(ActiveEggs:GetChildren()) do
         local n = inst:GetAttribute("Egg")
         local pa = inst:GetAttribute("Position")
         if not (n and pa) then continue end
@@ -333,6 +431,7 @@ RunService.RenderStepped:Connect(function()
         d.Dist.Position = Vector2.new(sp.X, sp.Y + 4) d.Dist.Text = hp and (math.floor((wp - hp).Magnitude + 0.5) .. "m") or "?m" d.Dist.Visible = true
     end
     for id, d in pairs(drawings) do if not seen[id] then pcall(function() d.Name:Remove() end) pcall(function() d.KG:Remove() end) pcall(function() d.Dist:Remove() end) drawings[id] = nil end end
+    end
 end)
 
 -- auto get egg
@@ -359,9 +458,14 @@ task.spawn(function()
             end
             local pp = GetPlotPos()
             if pp then
-                moveSpeed = CFG.BACK moveTarget = pp
-                local d = math.floor((pp - hrp.Position).Magnitude + 0.5)
-                SetStatus("status: RETURN " .. d .. "m (" .. #BasketList() .. " in basket)")
+                moveSpeed = CFG.BACK
+                local d = (pp - hrp.Position).Magnitude
+                if d > 120 then
+                    moveTarget = Vector3.new(pp.X, pp.Y + 70, pp.Z)
+                else
+                    moveTarget = pp
+                end
+                SetStatus("status: RETURN " .. math.floor(d + 0.5) .. "m (" .. #BasketList() .. " in basket)")
             else
                 SetStatus("status: RETURN (plot?)")
             end
@@ -385,14 +489,20 @@ task.spawn(function()
         end
         if not best then moveTarget = nil curEggId = nil SetStatus("status: HUNT (none)") continue end
         local pa = best:GetAttribute("Position")
-        local wp, model = EggWorldPos(best, bestN, pa)
-        wp = wp + Vector3.new(0, 6, 0)
-        if (wp - hrp.Position).Magnitude > 16 then
-            if curEggId ~= best.Name then curEggId = best.Name print("[aio] hunting:", bestN, math.floor((wp - hrp.Position).Magnitude) .. "m", Comma(bestS) .. " KG") end
-            moveTarget = wp
-            SetStatus("status: HUNT " .. bestN .. " " .. math.floor((wp - hrp.Position).Magnitude) .. "m")
+        local rawWp, model = EggWorldPos(best, bestN, pa)
+        local wpReal = rawWp + Vector3.new(0, 6, 0)
+        local realDist = (wpReal - hrp.Position).Magnitude
+        if realDist > 16 then
+            if curEggId ~= best.Name then curEggId = best.Name print("[aio] hunting:", bestN, math.floor(realDist) .. "m", Comma(bestS) .. " KG") end
+            if realDist > 120 then
+                moveTarget = Vector3.new(wpReal.X, wpReal.Y + 70, wpReal.Z)
+            else
+                moveTarget = wpReal
+            end
+            SetStatus("status: HUNT " .. bestN .. " " .. math.floor(realDist) .. "m")
             continue
         end
+        local wp = wpReal
         SetStatus("status: picking " .. bestN)
         moveTarget = nil
         lastFire[best.Name] = os.clock()
@@ -413,6 +523,71 @@ task.spawn(function()
             end
         end
         task.wait(1)
+    end
+end)
+
+-- auto place: biggest egg tool -> free nest (skip if full)
+task.spawn(function()
+    while running do
+        task.wait(2)
+        if not PLACE_ON then continue end
+        local plot = GetMyPlot()
+        if not plot then SetStatus("status: PLACE (no plot)") continue end
+        local nest = FindFreeNest(plot)
+        if nest == nil then SetStatus("status: PLACE (plot full)") continue end
+        local tool, shown = BiggestEggTool()
+        if not tool then continue end
+        if os.clock() - placeCD < 3 then continue end
+        local char = LP.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if not hum then continue end
+        SetStatus("status: PLACE " .. tool.Name .. " " .. Comma(shown) .. " KG")
+        pcall(function() hum:EquipTool(tool) end)
+        task.wait(0.4)
+        if tool.Parent ~= char then continue end
+        if nest == "NONEST" then
+            local base = plot:FindFirstChild("Baseplate")
+            if base and base:IsA("BasePart") then
+                local hx, hz = base.Size.X / 2 - 4, base.Size.Z / 2 - 4
+                local pp = base.Position + Vector3.new(math.random(-hx, hx), 3, math.random(-hz, hz))
+                placeCD = os.clock()
+                EggPlacedR:FireServer({ PlantPosition = pp })
+                print("[aio] placed (ground):", tool.Name, Comma(shown) .. " KG")
+            end
+        else
+            placeCD = os.clock()
+            EggPlacedR:FireServer({ NestId = nest.Name })
+            print("[aio] placed:", tool.Name, Comma(shown) .. " KG", "nest", nest.Name)
+        end
+        task.wait(1)
+        UnequipAll()
+    end
+end)
+
+-- auto hatch
+task.spawn(function()
+    while running do
+        task.wait(2)
+        if not HATCH_ON then continue end
+        local plot = GetMyPlot()
+        local eggs = plot and plot:FindFirstChild("Eggs")
+        if not eggs then continue end
+        for _, m in ipairs(eggs:GetChildren()) do
+            if not running or not HATCH_ON then break end
+            local key = m:GetAttribute("EggKey")
+            if not key then continue end
+            if m:HasTag("Hatching") then continue end
+            if hatchCD[key] and os.clock() - hatchCD[key] < 2 then continue end
+            local okReady, ready = pcall(EggReady, m)
+            if okReady and ready then
+                hatchCD[key] = os.clock()
+                m:AddTag("Hatching")
+                HatchR:FireServer({ EggKey = key })
+                SetStatus("status: HATCH " .. m.Name)
+                print("[aio] hatch:", m.Name)
+                task.wait(1)
+            end
+        end
     end
 end)
 
