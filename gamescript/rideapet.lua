@@ -93,7 +93,7 @@ local function SaveCFG()
     CFG.HATCH = HATCH_ON
     pcall(function()
         if writefile then
-            writefile(CONFIG_FILE, HttpService:JSONEncode({
+            local data = {
                 MIN_KG = CFG.MIN_KG,
                 GO = CFG.GO,
                 BACK = CFG.BACK,
@@ -101,7 +101,11 @@ local function SaveCFG()
                 AUTO = AUTO_ON,
                 PLACE = PLACE_ON,
                 HATCH = HATCH_ON,
-            }))
+            }
+            if CFG.VENT then
+                data.VENT = CFG.VENT
+            end
+            writefile(CONFIG_FILE, HttpService:JSONEncode(data))
         end
     end)
 end
@@ -225,6 +229,19 @@ local function IsVolcanic(n)
 end
 local volcLeg = nil
 local function VolcanoEntrance()
+    local v0 = workspace:FindFirstChild("Volcano")
+    if v0 then
+        local door = v0:FindFirstChild("VolcanoEntrance")
+        if door and door:IsA("BasePart") then
+            local okD, posD = pcall(function() return door.Position end)
+            if okD and posD then
+                return posD
+            end
+        end
+    end
+    if CFG.VENT and tonumber(CFG.VENT.x) and tonumber(CFG.VENT.y) and tonumber(CFG.VENT.z) then
+        return Vector3.new(CFG.VENT.x, CFG.VENT.y, CFG.VENT.z)
+    end
     local hrp = GetHRP()
     if not hrp then
         return nil
@@ -580,7 +597,19 @@ Label("Back speed:", 240, 15)
 Box(CFG.BACK, 256, function(v)
     if v > 10 then CFG.BACK = v end
 end)
-scroll.CanvasSize = UDim2.new(0, 0, 0, 284)
+Button("Set entrance HERE", 284, function()
+    local hrp = GetHRP()
+    if hrp then
+        local p = hrp.Position
+        CFG.VENT = {x = p.X, y = p.Y, z = p.Z}
+        SaveCFG()
+        SetStatus("status: entrance saved")
+        print("[aio] entrance saved")
+    else
+        SetStatus("status: no character")
+    end
+end)
+scroll.CanvasSize = UDim2.new(0, 0, 0, 316)
 Refresh()
 SetStatus("status: ready")
 print("[aio] build ok. drawing=" .. tostring(HAS_DRAWING))
