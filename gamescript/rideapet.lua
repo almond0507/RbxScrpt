@@ -431,7 +431,7 @@ title.TextColor3 = Color3.new(1, 1, 1)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 13
 title.TextXAlignment = Enum.TextXAlignment.Left
-title.Text = "ALL IN ONE - Ethereal"
+title.Text = "Ride A Pet - Ethereal"
 title.Parent = frame
 
 local minB = Instance.new("TextButton")
