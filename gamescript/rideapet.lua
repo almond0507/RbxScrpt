@@ -119,6 +119,10 @@ local moveSpeed = CFG.GO
 local curEggId = nil
 local lastCarriedShown = 0
 local lastCarriedName = ""
+local wasCarrying = false
+local carryStartT = 0
+local carryLogT = 0
+local lastRem = nil
 
 _G.AIO_Off = function()
     running = false
@@ -210,6 +214,9 @@ local function IsVolcanic(n)
     return n == "Volcanic Egg"
 end
 local volcLeg = nil
+local doorPhase = nil
+local doorTries = 0
+local doorStamp = 0
 local function VolcanoEntrance()
     local v0 = workspace:FindFirstChild("Volcano")
     if v0 then
@@ -250,6 +257,38 @@ local function VolcanoEntrance()
         out = Vector3.new(0, 0, 1)
     end
     return edge + out.Unit * 80 + Vector3.new(0, 15, 0)
+end
+local function VolcanoDoorPoints()
+    local v = workspace:FindFirstChild("Volcano")
+    local door = nil
+    local isl = nil
+    if v then
+        local d = v:FindFirstChild("VolcanoEntrance")
+        if d and d:IsA("BasePart") then
+            door = d
+        end
+        isl = v:FindFirstChild("VolcanoIsland")
+    end
+    if not door or not isl then
+        return nil
+    end
+    local okD, dp = pcall(function() return door.Position end)
+    local okI, cp = pcall(function() return (isl:GetBoundingBox()) end)
+    if not okD or not dp then
+        return nil
+    end
+    if not okI or not cp then
+        return nil
+    end
+    local out = dp - cp.Position
+    out = Vector3.new(out.X, 0, out.Z)
+    if out.Magnitude < 1 then
+        out = Vector3.new(0, 0, 1)
+    end
+    out = out.Unit
+    local front = dp + out * 15 + Vector3.new(0, 5, 0)
+    local inside = dp - out * 20 + Vector3.new(0, 5, 0)
+    return front, inside
 end
 local function FindFreeNest(plot)
     if not plot then return nil end
@@ -319,6 +358,20 @@ local function BasketList()
 end
 local function Carrying()
     return #BasketList() > 0
+end
+local function BreakRemaining()
+    local now = Workspace:GetServerTimeNow()
+    local left = nil
+    for _, child in ipairs(BasketList()) do
+        local br = tonumber(child:GetAttribute("BreakAt"))
+        if br then
+            local l = br - now
+            if not left or l < left then
+                left = l
+            end
+        end
+    end
+    return left
 end
 local status = nil
 local function UnequipAll()
@@ -552,6 +605,7 @@ autoB = Button("Auto: OFF", 52, function()
         moveTarget = nil
         mode = "HUNT"
         volcLeg = nil
+        doorPhase = nil
     end
     Refresh()
     SaveCFG()
@@ -772,6 +826,10 @@ task.spawn(function()
         end
         if Carrying() and mode ~= "RETURN" then
             mode = "RETURN"
+            wasCarrying = true
+            carryStartT = os.clock()
+            carryLogT = 0
+            lastRem = BreakRemaining()
             print("[aio] carrying, returning")
         end
         if not AUTO_ON then
@@ -784,11 +842,23 @@ task.spawn(function()
                 mode = "HUNT"
                 moveTarget = nil
                 UnequipAll()
+                local lh = GetPlotPos()
+                local hh = GetHRP()
+                local dd = -1
+                if lh and hh then
+                    dd = (lh - hh.Position).Magnitude
+                end
+                local el = math.floor(os.clock() - carryStartT + 0.5)
+                if wasCarrying and dd > 100 then
+                    print("[aio] LOST " .. tostring(lastCarriedName) .. " lastLeft " .. (lastRem and string.format("%.1f", lastRem) or "?") .. "s " .. tostring(math.floor(dd + 0.5)) .. "m from plot t+" .. tostring(el) .. "s")
+                else
+                    print("[aio] deposited, unequipped")
+                end
+                wasCarrying = false
                 lastCarriedShown = 0
                 lastCarriedName = ""
                 volcLeg = nil
                 SetStatus("status: deposited, unequipped")
-                print("[aio] deposited, unequipped")
                 continue
             end
             local pp = GetPlotPos()
@@ -796,8 +866,8 @@ task.spawn(function()
                 local outEnt = VolcanoEntrance()
                 if outEnt then
                     local dOut = (outEnt - hrp.Position).Magnitude
-                    if dOut > 30 then
-                        moveSpeed = CFG.BACK
+                    if dOut > 15 then
+                        moveSpeed = 50
                         moveTarget = outEnt
                         SetStatus("status: VOLC OUT " .. tostring(math.floor(dOut)) .. "m")
                         continue
@@ -814,6 +884,15 @@ task.spawn(function()
                     moveTarget = pp
                 end
                 SetStatus("status: RETURN " .. tostring(math.floor(d + 0.5)) .. "m (" .. tostring(#BasketList()) .. " in basket)")
+                if os.clock() - carryLogT > 2 then
+                    carryLogT = os.clock()
+                    local rem2 = BreakRemaining()
+                    if rem2 then
+                        lastRem = rem2
+                    end
+                    local el2 = math.floor(os.clock() - carryStartT + 0.5)
+                    print("[aio] carry: left " .. (rem2 and string.format("%.1f", rem2) or "?") .. "s dist " .. tostring(math.floor(d + 0.5)) .. "m t+" .. tostring(el2) .. "s")
+                end
             else
                 SetStatus("status: RETURN (plot?)")
             end
@@ -861,6 +940,8 @@ task.spawn(function()
         if curEggId ~= best.Name then
             curEggId = best.Name
             volcLeg = nil
+            doorPhase = nil
+            doorTries = 0
             print("[aio] hunting: " .. tostring(bestN) .. " " .. tostring(math.floor(realDist)) .. "m " .. Comma(bestS) .. " KG")
             if IsVolcanic(bestN) and not ent then
                 print("[aio] volcano not streamed, direct fly")
@@ -875,13 +956,64 @@ task.spawn(function()
             end
         end
         if volcLeg == "TOIN" and ent then
-            local dIn = (ent - hrp.Position).Magnitude
-            if dIn > 30 then
-                moveTarget = ent
-                SetStatus("status: VOLC IN " .. tostring(math.floor(dIn)) .. "m")
-                continue
+            local front, inside = VolcanoDoorPoints()
+            if front and inside then
+                if doorPhase ~= "CROSS" and doorPhase ~= "VERIFY" then
+                    doorPhase = "FRONT"
+                end
+                if doorPhase == "FRONT" then
+                    moveSpeed = 50
+                    local dF = (front - hrp.Position).Magnitude
+                    if dF > 20 then
+                        moveTarget = front
+                        SetStatus("status: DOOR IN " .. tostring(math.floor(dF)) .. "m")
+                        continue
+                    end
+                    doorPhase = "CROSS"
+                    doorTries = 0
+                end
+                if doorPhase == "CROSS" then
+                    moveSpeed = 50
+                    moveTarget = inside
+                    SetStatus("status: CROSSING")
+                    local dC = (inside - hrp.Position).Magnitude
+                    if dC <= 12 then
+                        doorPhase = "VERIFY"
+                        doorStamp = os.clock()
+                    end
+                    continue
+                end
+                if doorPhase == "VERIFY" then
+                    moveSpeed = 50
+                    moveTarget = inside
+                    if LP:GetAttribute("InVolcano") == true then
+                        doorPhase = nil
+                        volcLeg = "TOEGG"
+                    else
+                        if os.clock() - doorStamp > 3 then
+                            doorTries = doorTries + 1
+                            if doorTries >= 3 then
+                                doorPhase = nil
+                                moveTarget = nil
+                                SetStatus("status: door blocked")
+                                continue
+                            end
+                            doorPhase = "FRONT"
+                        else
+                            SetStatus("status: VERIFY")
+                        end
+                        continue
+                    end
+                end
+            else
+                local dIn = (ent - hrp.Position).Magnitude
+                if dIn > 30 then
+                    moveTarget = ent
+                    SetStatus("status: VOLC IN " .. tostring(math.floor(dIn)) .. "m")
+                    continue
+                end
+                volcLeg = "TOEGG"
             end
-            volcLeg = "TOEGG"
         end
         if realDist > 16 then
             if curEggId ~= best.Name then
