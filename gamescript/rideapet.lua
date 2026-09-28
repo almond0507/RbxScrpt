@@ -102,9 +102,6 @@ local function SaveCFG()
                 PLACE = PLACE_ON,
                 HATCH = HATCH_ON,
             }
-            if CFG.VENT then
-                data.VENT = CFG.VENT
-            end
             writefile(CONFIG_FILE, HttpService:JSONEncode(data))
         end
     end)
@@ -121,22 +118,7 @@ local moveTarget = nil
 local moveSpeed = CFG.GO
 local curEggId = nil
 local lastCarriedShown = 0
-local lastCarriedReal = 1
 local lastCarriedName = ""
-local function CarryCap()
-    local mult = 1
-    pcall(function()
-        mult = General2.EggCarrySpeedMultiplier(lastCarriedReal, lastCarriedName)
-    end)
-    if type(mult) ~= "number" then
-        mult = 1
-    end
-    local cap = math.floor(270 * mult * 0.9)
-    if cap < 40 then
-        cap = 40
-    end
-    return cap
-end
 
 _G.AIO_Off = function()
     running = false
@@ -238,9 +220,6 @@ local function VolcanoEntrance()
                 return posD
             end
         end
-    end
-    if CFG.VENT and tonumber(CFG.VENT.x) and tonumber(CFG.VENT.y) and tonumber(CFG.VENT.z) then
-        return Vector3.new(CFG.VENT.x, CFG.VENT.y, CFG.VENT.z)
     end
     local hrp = GetHRP()
     if not hrp then
@@ -597,19 +576,7 @@ Label("Back speed:", 240, 15)
 Box(CFG.BACK, 256, function(v)
     if v > 10 then CFG.BACK = v end
 end)
-Button("Set entrance HERE", 284, function()
-    local hrp = GetHRP()
-    if hrp then
-        local p = hrp.Position
-        CFG.VENT = {x = p.X, y = p.Y, z = p.Z}
-        SaveCFG()
-        SetStatus("status: entrance saved")
-        print("[aio] entrance saved")
-    else
-        SetStatus("status: no character")
-    end
-end)
-scroll.CanvasSize = UDim2.new(0, 0, 0, 316)
+scroll.CanvasSize = UDim2.new(0, 0, 0, 284)
 Refresh()
 SetStatus("status: ready")
 print("[aio] build ok. drawing=" .. tostring(HAS_DRAWING))
@@ -805,7 +772,7 @@ task.spawn(function()
         end
         if Carrying() and mode ~= "RETURN" then
             mode = "RETURN"
-            print("[aio] carrying, returning cap " .. tostring(CarryCap()))
+            print("[aio] carrying, returning")
         end
         if not AUTO_ON then
             moveTarget = nil
@@ -818,7 +785,6 @@ task.spawn(function()
                 moveTarget = nil
                 UnequipAll()
                 lastCarriedShown = 0
-                lastCarriedReal = 1
                 lastCarriedName = ""
                 volcLeg = nil
                 SetStatus("status: deposited, unequipped")
@@ -831,7 +797,7 @@ task.spawn(function()
                 if outEnt then
                     local dOut = (outEnt - hrp.Position).Magnitude
                     if dOut > 30 then
-                        moveSpeed = math.min(CFG.BACK, CarryCap())
+                        moveSpeed = CFG.BACK
                         moveTarget = outEnt
                         SetStatus("status: VOLC OUT " .. tostring(math.floor(dOut)) .. "m")
                         continue
@@ -839,9 +805,10 @@ task.spawn(function()
                 end
             end
             if pp then
-                moveSpeed = math.min(CFG.BACK, CarryCap())
+                moveSpeed = CFG.BACK
                 local d = (pp - hrp.Position).Magnitude
-                if d > 120 then
+                local noCruise = IsVolcanic(lastCarriedName) and LP:GetAttribute("InVolcano") == true
+                if d > 120 and not noCruise then
                     moveTarget = Vector3.new(pp.X, pp.Y + 70, pp.Z)
                 else
                     moveTarget = pp
@@ -921,10 +888,14 @@ task.spawn(function()
                 curEggId = best.Name
                 print("[aio] hunting: " .. tostring(bestN) .. " " .. tostring(math.floor(realDist)) .. "m " .. Comma(bestS) .. " KG")
             end
-            if realDist > 120 then
-                moveTarget = Vector3.new(wpReal.X, wpReal.Y + 70, wpReal.Z)
-            else
+            if IsVolcanic(bestN) then
                 moveTarget = wpReal
+            else
+                if realDist > 120 then
+                    moveTarget = Vector3.new(wpReal.X, wpReal.Y + 70, wpReal.Z)
+                else
+                    moveTarget = wpReal
+                end
             end
             SetStatus("status: HUNT " .. tostring(bestN) .. " " .. tostring(math.floor(realDist)) .. "m")
             continue
@@ -935,7 +906,6 @@ task.spawn(function()
         lastFire[best.Name] = os.clock()
         lastCarriedShown = bestS
         lastCarriedName = bestN
-        lastCarriedReal = tonumber(best:GetAttribute("Weight")) or 1
         local hrp2 = GetHRP()
         if hrp2 then
             pcall(function()
